@@ -39,10 +39,9 @@ export function getOnboardingState(storeId: string): OnboardingStateDTO {
     | undefined;
 
   const settingsRows = sqlite
-    .prepare("SELECT key, value FROM store_settings WHERE store_id = ? AND key IN ('demoMode', 'productionSalesEnabled')")
+    .prepare("SELECT key, value FROM store_settings WHERE store_id = ? AND key = 'productionSalesEnabled'")
     .all(storeId) as Array<{ key: string; value: string }>;
   const settingsMap = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
-  const demoMode = settingsMap.demoMode !== 'false';
 
   const pincodeCount = (
     sqlite.prepare('SELECT COUNT(*) as c FROM serviceable_pincodes WHERE store_id = ? AND is_active = 1').get(storeId) as { c: number }
@@ -160,7 +159,6 @@ export function getOnboardingState(storeId: string): OnboardingStateDTO {
   if (!hasRealGstAndZones) blockers.push('Verified non-demo GSTIN & serviceable PIN code required');
   if (!store?.logo_url || Boolean(store?.logo_placeholder)) blockers.push('Real store logo upload required');
   if (!row?.compliance_signed_off) blockers.push('Store Owner / Pharmacist compliance sign-off required');
-  if (demoMode) blockers.push('Store is currently in Demonstration Mode (toggle off for production)');
 
   return {
     storeId,
@@ -169,7 +167,7 @@ export function getOnboardingState(storeId: string): OnboardingStateDTO {
     signedOffBy: row?.signed_off_by || null,
     signedOffAt: row?.signed_off_at || null,
     productionSalesEnabled: Boolean(row?.production_sales_enabled) && settingsMap.productionSalesEnabled === 'true',
-    demoMode,
+    demoMode: false,
     liveModeEligible: blockers.length === 0,
     steps,
     blockers,
@@ -270,15 +268,7 @@ export function signOffOnboardingLaunch(params: {
       )
       .run(crypto.randomUUID(), params.storeId, params.enableProductionSales ? 'true' : 'false', now);
 
-    if (params.enableProductionSales) {
-      sqlite
-        .prepare(
-          `INSERT INTO store_settings (id, store_id, key, value, updated_at)
-           VALUES (?, ?, 'demoMode', 'false', ?)
-           ON CONFLICT(store_id, key) DO UPDATE SET value = 'false', updated_at = excluded.updated_at`
-        )
-        .run(crypto.randomUUID(), params.storeId, now);
-    }
+
   });
 
   return { ok: true, state: getOnboardingState(params.storeId) };

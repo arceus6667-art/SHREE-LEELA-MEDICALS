@@ -2470,7 +2470,6 @@ export function createAdminRouter(): Router {
           googleMapsUrl: z.string().trim().url().optional(),
           drugLicenseNumber: z.string().trim().max(80).optional().nullable(),
           gstin: z.string().trim().max(60).optional().nullable(),
-          demoMode: z.boolean(),
           deliveryFeePaise: z.number().int().min(0),
           freeDeliveryThresholdPaise: z.number().int().min(0),
           minimumOrderPaise: z.number().int().min(0).optional().default(0),
@@ -2517,7 +2516,6 @@ export function createAdminRouter(): Router {
         }
 
         const kv: Array<[string, string]> = [
-          ['demoMode', String(d.demoMode)],
           ['deliveryFeePaise', String(d.deliveryFeePaise)],
           ['freeDeliveryThresholdPaise', String(d.freeDeliveryThresholdPaise)],
           ['minimumOrderPaise', String(d.minimumOrderPaise ?? 0)],

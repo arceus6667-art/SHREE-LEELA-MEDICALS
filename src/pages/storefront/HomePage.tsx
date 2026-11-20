@@ -6,19 +6,20 @@ import {
   Phone,
   Upload,
   ArrowRight,
-  Building2,
   Search,
   HeadphonesIcon,
   ExternalLink,
-  ShieldCheck,
   FileCheck2,
   Store,
+  PackageSearch,
+  ChevronDown,
 } from 'lucide-react';
 import { StorefrontLayout } from '../../components/StorefrontLayout.tsx';
 import { MedicineCard } from '../../components/MedicineCard.tsx';
 import { Button, Card } from '../../components/ui/primitives.tsx';
 import { useApp } from '../../context/AppContext.tsx';
 import { apiFetch } from '../../lib/api.ts';
+import '../../styles/storefront-home.css';
 import type { CategoryDTO, MedicineDTO, PromotionBannerDTO, PublicStoreInfo } from '../../shared/types.ts';
 
 interface HomepagePayload {
@@ -30,16 +31,26 @@ interface HomepagePayload {
   popularSearches: string[];
 }
 
+const categoryArtwork: Record<string, number> = {
+  'tablets-and-capsules': 0, 'syrups-and-oral-liquids': 0, 'first-aid': 1,
+  'baby-care': 2, 'skin-care-medicines': 3, 'personal-care': 3,
+  'vitamins-and-supplements': 4, 'diabetes-care': 5, 'medical-devices': 6,
+  'heart-and-blood-pressure': 6, 'pharmacy-essentials': 7, 'eye-and-ear-care': 3,
+  'pain-relief': 1, 'digestive-health': 4, 'respiratory-care': 6,
+};
+
 export function HomePage() {
   const { store, categories, recentlyViewedIds, deliveryLocation } = useApp();
   const [homepage, setHomepage] = useState<HomepagePayload | null>(null);
   const [recentMeds, setRecentMeds] = useState<MedicineDTO[]>([]);
   const [loading, setLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState(false);
+  const [showAllCategories, setShowAllCategories] = useState(false);
 
   useEffect(() => {
     apiFetch<HomepagePayload>('/api/homepage')
       .then(setHomepage)
-      .catch(console.error)
+      .catch(() => setCatalogError(true))
       .finally(() => setLoading(false));
   }, []);
 
@@ -54,6 +65,11 @@ export function HomePage() {
   }, [recentlyViewedIds]);
 
   const activeCategories = homepage?.categories || categories;
+  const orderedCategories = [...activeCategories].sort((first, second) => {
+    const featured = ['tablets-and-capsules', 'first-aid', 'baby-care', 'skin-care-medicines', 'vitamins-and-supplements', 'diabetes-care', 'medical-devices', 'pharmacy-essentials'];
+    const rank = (slug: string) => featured.includes(slug) ? featured.indexOf(slug) : featured.length;
+    return rank(first.slug) - rank(second.slug);
+  });
   const promotions = homepage?.promotions || [];
   const featured = homepage?.featuredMedicines || [];
   const essentials = homepage?.essentialMedicines || [];
@@ -61,110 +77,24 @@ export function HomePage() {
 
   return (
     <StorefrontLayout>
-      {/* Promotional Banners (Admin Configurable) */}
-      {promotions.length > 0 && (
-        <section className="border-b border-[#E1E5EB] bg-white">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 py-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-            {promotions.map((promo, idx) => (
-              <div
-                key={promo.id}
-                className={`flex flex-col justify-between rounded-lg border p-5 ${
-                  idx === 0
-                    ? 'border-[#F5C2C7] bg-[#FFF5F5]'
-                    : 'border-[#A7F3D0] bg-[#ECFDF5]'
-                }`}
-              >
-                <div className="space-y-2">
-                  {promo.badgeText && (
-                    <span
-                      className={`inline-block text-[11px] font-bold uppercase tracking-wide ${
-                        idx === 0 ? 'text-[#B5121B]' : 'text-[#16835D]'
-                      }`}
-                    >
-                      {promo.badgeText}
-                    </span>
-                  )}
-                  <h2 className="text-lg font-bold text-[#202630]">{promo.title}</h2>
-                  <p className="text-xs sm:text-sm text-[#526071] leading-relaxed">{promo.subtitle}</p>
-                </div>
-                <div className="mt-4">
-                  <Link to={promo.ctaLink}>
-                    <Button size="sm" variant={idx === 0 ? 'default' : 'secondary'}>
-                      {promo.ctaLabel}
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </Button>
-                  </Link>
-                </div>
-              </div>
-            ))}
+      <div className="slm-home mx-auto max-w-7xl px-4 sm:px-6">
+        <section className="slm-hero" aria-labelledby="storefront-title">
+          <div className="slm-hero-copy">
+            <p className="slm-location"><MapPin size={16} /> {store?.city || 'Mira Road East'}</p>
+            <h1 id="storefront-title">Your neighbourhood<br className="hidden lg:block" /> pharmacy, online.</h1>
+            <p>Browse medicines and healthcare essentials from Shree Leela Medical &amp; General Stores.</p>
+            <div className="slm-actions">
+              <Link className="slm-action slm-action-primary" to="/pharmacy">Browse pharmacy <ArrowRight size={17} /></Link>
+              <Link className="slm-action slm-action-secondary" to="/upload-prescription"><Upload size={17} /> Upload prescription</Link>
+            </div>
+          </div>
+          <div className="slm-hero-side">
+            <div><FileCheck2 size={22} /><span><strong>Prescription review</strong><small>Upload a photo or PDF for our pharmacist.</small></span></div>
+            <div><Store size={22} /><span><strong>Store pickup and delivery</strong><small>{deliveryLocation.serviceable ? `Delivery for PIN ${deliveryLocation.pincode}` : 'Check your PIN code for delivery availability.'}</small></span></div>
+            <Link to="/account/orders"><PackageSearch size={22} /><span><strong>Track your order</strong><small>Check the status of an existing order.</small></span><ArrowRight size={17} /></Link>
           </div>
         </section>
-      )}
-
-      {/* Prominent Prescription Upload & Serviceability Strip */}
-      <section className="mx-auto max-w-7xl px-4 sm:px-6 pt-6">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 rounded-lg border border-[#E1E5EB] bg-white p-5 sm:p-6">
-          <div className="lg:col-span-7 flex flex-col justify-between gap-4">
-            <div className="space-y-2.5">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#16835D]">
-                <span>{store?.city || 'Mira Road East'} Online Pharmacy</span>
-                <span aria-hidden="true" className="text-[#CBD2D9]">·</span>
-                <span>Open {store?.operatingHours || '8 AM to 11 PM'}</span>
-                <span aria-hidden="true" className="text-[#CBD2D9]">·</span>
-                <span>PIN {deliveryLocation.pincode} {deliveryLocation.serviceable ? '(Serviceable)' : '(Pickup)'}</span>
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#202630]">
-                Order Medicines & Healthcare Essentials
-              </h1>
-              <p className="text-sm text-[#526071] leading-relaxed max-w-2xl">
-                Browse pharmacist-approved medicines, OTC healthcare essentials, and home medical devices from {store?.name || 'Shree Leela Medical & General Stores'}. Prescription medicines are dispensed strictly upon registered pharmacist verification.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Link to="/upload-prescription">
-                <Button size="lg">
-                  <Upload className="h-4 w-4" />
-                  Upload Prescription
-                </Button>
-              </Link>
-              <Link to="/pharmacy">
-                <Button variant="outline" size="lg">
-                  Browse Full Pharmacy
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              </Link>
-              <Link to="/quick-order">
-                <Button variant="secondary" size="lg">
-                  Quick Order by SKU / Name
-                </Button>
-              </Link>
-            </div>
-          </div>
-
-          <div className="lg:col-span-5 rounded-lg border border-[#E1E5EB] bg-[#F5F7FA] p-4 flex flex-col justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <FileCheck2 className="mt-0.5 h-5 w-5 text-[#16835D] shrink-0" />
-              <div>
-                <h2 className="text-sm font-bold text-[#202630]">Have a Doctor&apos;s Prescription?</h2>
-                <p className="mt-0.5 text-xs text-[#526071]">
-                  Upload a photo or PDF. Our registered pharmacist verifies Schedule H items and prepares an itemized confirmation before online payment is collected.
-                </p>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2 border-t border-[#E1E5EB] pt-3 text-xs text-[#526071]">
-              <div className="flex items-center gap-1.5">
-                <ShieldCheck className="h-4 w-4 text-[#D71920]" />
-                <span>Batch & Expiry Verified</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Store className="h-4 w-4 text-[#16835D]" />
-                <span>Pickup or Home Delivery</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      </div>
 
       {/* Popular Medicine Searches */}
       {popularSearches.length > 0 && (
@@ -187,65 +117,65 @@ export function HomePage() {
         </section>
       )}
 
-      {/* Shop by Category (13 Pharmacy Categories) */}
-      <section className="mx-auto max-w-7xl px-4 sm:px-6 pt-10">
-        <div className="mb-5 flex items-center justify-between gap-4">
+      <section className="slm-home mx-auto max-w-7xl px-4 sm:px-6 pt-9" aria-labelledby="shop-categories">
+        <div className="slm-section-heading">
           <div>
-            <h2 className="text-xl font-bold text-[#202630]">Shop by Pharmacy Category</h2>
-            <p className="text-xs text-[#526071]">
-              Catalogue navigation categories for pharmacist-approved products (not treatment recommendations)
-            </p>
+            <h2 id="shop-categories">Shop by category</h2>
+            <p>Find what you need in the pharmacy catalogue.</p>
           </div>
-          <Link to="/categories" className="text-sm font-medium text-[#D71920] hover:underline whitespace-nowrap shrink-0">
-            All Categories →
-          </Link>
+          <Link to="/categories">All categories <ArrowRight size={16} /></Link>
         </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {activeCategories.map((cat) => (
-            <Link
-              key={cat.id}
-              to={`/pharmacy?category=${cat.slug}`}
-              className="rounded-lg border border-[#E1E5EB] bg-white p-3.5 transition-colors hover:border-[#D71920]"
-            >
-              <div className="text-sm font-semibold text-[#202630]">{cat.name}</div>
-              <div className="mt-1 text-xs text-[#526071] line-clamp-2">{cat.description}</div>
-              <div className="mt-2.5 text-xs font-medium text-[#16835D] tabular-nums">
-                {cat.medicineCount ?? 0} product{(cat.medicineCount ?? 0) === 1 ? '' : 's'}
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      {/* Featured Products (Admin Configurable) */}
-      <section className="mx-auto max-w-7xl px-4 sm:px-6 pt-10">
-        <div className="mb-5 flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-bold text-[#202630]">Featured Pharmacy Products</h2>
-            <p className="text-xs text-[#526071]">
-              Curated in Admin Dashboard · Only pharmacist-approved listings displayed
-            </p>
-          </div>
-          <Link to="/pharmacy" className="text-sm font-medium text-[#D71920] hover:underline whitespace-nowrap shrink-0">
-            View Full Catalog →
-          </Link>
-        </div>
-
-        {loading ? (
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-            {[1, 2, 3, 4].map((n) => (
-              <div key={n} className="h-72 rounded-lg border border-[#E1E5EB] bg-white animate-pulse" />
-            ))}
-          </div>
+        {activeCategories.length > 0 ? (
+          <>
+            <div className="slm-category-grid" id="home-category-grid">
+              {(showAllCategories ? orderedCategories : orderedCategories.slice(0, 8)).map((category) => {
+                const artwork = categoryArtwork[category.slug] ?? 7;
+                return (
+                  <Link key={category.id} to={`/pharmacy?category=${encodeURIComponent(category.slug)}`} className="slm-category">
+                    <img src={`/images/categories/category-${artwork + 1}.webp`} alt="" loading="lazy" width="320" height="240" />
+                    <span>{category.name}<ArrowRight size={15} aria-hidden="true" /></span>
+                  </Link>
+                );
+              })}
+            </div>
+            {activeCategories.length > 8 && (
+              <button type="button" className="slm-category-toggle" aria-expanded={showAllCategories} aria-controls="home-category-grid" onClick={() => setShowAllCategories((value) => !value)}>
+                {showAllCategories ? 'Show fewer categories' : 'Show more categories'}
+                <ChevronDown size={17} style={{ transform: showAllCategories ? 'rotate(180deg)' : undefined }} />
+              </button>
+            )}
+          </>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-            {featured.map((med) => (
-              <MedicineCard key={med.id} medicine={med} />
-            ))}
-          </div>
+          <p role="status" className="slm-catalog-message">
+            {loading ? 'Loading categories…' : catalogError ? 'The catalogue is temporarily unavailable.' : 'The store is adding its online catalogue.'}
+          </p>
         )}
       </section>
+
+      {promotions.length > 0 && (
+        <section className="slm-home mx-auto max-w-7xl px-4 sm:px-6 pt-9" aria-label="Store updates">
+          <div className="grid gap-4 md:grid-cols-2">
+            {promotions.map((promotion) => (
+              <Link key={promotion.id} to={promotion.ctaLink} className="slm-promotion">
+                <div><h2>{promotion.title}</h2><p>{promotion.subtitle}</p></div>
+                <span>{promotion.ctaLabel} <ArrowRight size={16} /></span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {featured.length > 0 && (
+        <section className="slm-home mx-auto max-w-7xl px-4 sm:px-6 pt-9" aria-labelledby="featured-products">
+          <div className="slm-section-heading">
+            <h2 id="featured-products">Featured products</h2>
+            <Link to="/pharmacy">View catalogue <ArrowRight size={16} /></Link>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+            {featured.map((medicine) => <MedicineCard key={medicine.id} medicine={medicine} />)}
+          </div>
+        </section>
+      )}
 
       {/* Pharmacy Essentials */}
       {essentials.length > 0 && (
@@ -286,25 +216,12 @@ export function HomePage() {
       <section className="mx-auto max-w-7xl px-4 sm:px-6 pt-10">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <Card className="lg:col-span-7 p-6 grid grid-cols-1 gap-5 sm:grid-cols-12 items-center">
-            <div className="sm:col-span-5">
-              {store?.storefrontPhotoUrl ? (
-                <img
-                  src={store.storefrontPhotoUrl}
-                  alt={store.name}
-                  referrerPolicy="no-referrer"
-                  className="h-44 w-full rounded-md object-cover border border-[#E1E5EB]"
-                />
-              ) : (
-                <div className="flex h-44 flex-col items-center justify-center rounded-md border border-dashed border-[#CBD2D9] bg-[#F5F7FA] p-4 text-center">
-                  <Building2 className="mb-2 h-8 w-8 text-[#D71920]" />
-                  <div className="text-xs font-semibold text-[#202630]">Storefront Photo Placeholder</div>
-                  <div className="mt-1 text-[11px] text-[#526071]">
-                    Replaceable in Admin Store Settings
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="sm:col-span-7 space-y-2.5">
+            {store?.storefrontPhotoUrl && (
+              <div className="sm:col-span-5">
+                <img src={store.storefrontPhotoUrl} alt="Shree Leela Medical and General Stores storefront" loading="lazy" width="480" height="340" className="h-44 w-full rounded-xl object-cover" />
+              </div>
+            )}
+            <div className={store?.storefrontPhotoUrl ? 'sm:col-span-7 space-y-2.5' : 'sm:col-span-12 space-y-2.5'}>
               <h2 className="text-lg font-bold text-[#202630]">
                 {store?.name || 'Shree Leela Medical & General Stores'}
               </h2>

@@ -1,50 +1,88 @@
+import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { IStorageService } from '../interfaces/services.ts';
 
-const UPLOAD_ROOT = path.resolve(process.cwd(), 'data', 'uploads');
+const uploadRoot = path.resolve(process.env.STORAGE_LOCAL_DIR || 'data/uploads');
+const allowedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf']);
+const folders = 'prescriptions|store|medicines|partners|invoices|pod';
+const fileKeyPattern = new RegExp(`^(?:${folders})/[\\w.-]+\\.(?:jpe?g|png|webp|pdf|bin)$`, 'i');
 
-export class LocalObjectStorageService implements IStorageService {
-  constructor() {
-    fs.mkdirSync(path.join(UPLOAD_ROOT, 'prescriptions'), { recursive: true });
-    fs.mkdirSync(path.join(UPLOAD_ROOT, 'store'), { recursive: true });
-    fs.mkdirSync(path.join(UPLOAD_ROOT, 'medicines'), { recursive: true });
-    fs.mkdirSync(path.join(UPLOAD_ROOT, 'partners'), { recursive: true });
-    fs.mkdirSync(path.join(UPLOAD_ROOT, 'invoices'), { recursive: true });
-    fs.mkdirSync(path.join(UPLOAD_ROOT, 'pod'), { recursive: true });
+type Upload = Parameters<IStorageService['saveFile']>[0];
+
+function makeFileKey(params: Upload): string {
+  const extension = path.extname(params.originalName).toLowerCase();
+  return `${params.folder}/${crypto.randomUUID()}${allowedExtensions.has(extension) ? extension : '.bin'}`;
+}
+
+class LocalObjectStorageService implements IStorageService {
+  async saveFile(params: Upload) {
+    const fileKey = makeFileKey(params);
+    const target = path.join(uploadRoot, fileKey);
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    await fs.promises.writeFile(target, params.buffer, { flag: 'wx' });
+    return { fileKey, publicUrl: `/uploads/${fileKey}` };
   }
 
-  async saveFile(params: {
-    folder: 'prescriptions' | 'store' | 'medicines' | 'partners' | 'invoices' | 'pod';
-    originalName: string;
-    mimeType: string;
-    buffer: Buffer;
-  }): Promise<{ fileKey: string; publicUrl: string }> {
-    const ext = path.extname(params.originalName || '').toLowerCase().replace(/[^.a-z0-9]/g, '') || '.bin';
-    const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.svg'];
-    const safeExt = allowedExts.includes(ext) ? ext : '.bin';
-    const uniqueName = `${Date.now()}_${crypto.randomUUID()}${safeExt}`;
-    const fileKey = `${params.folder}/${uniqueName}`;
-    const targetPath = path.join(UPLOAD_ROOT, params.folder, uniqueName);
-    await fs.promises.writeFile(targetPath, params.buffer);
-    return {
-      fileKey,
-      publicUrl: `/uploads/${fileKey}`,
-    };
-  }
-
-  getAbsolutePath(fileKey: string): string | null {
-    const normalized = path.normalize(fileKey).replace(/^(\.\.[/\\])+/, '');
-    const fullPath = path.join(UPLOAD_ROOT, normalized);
-    if (!fullPath.startsWith(UPLOAD_ROOT)) {
-      return null;
+  async readFile(fileKey: string): Promise<Buffer | null> {
+    if (!fileKeyPattern.test(fileKey)) return null;
+    try {
+      return await fs.promises.readFile(path.join(uploadRoot, fileKey));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
     }
-    if (!fs.existsSync(fullPath)) {
-      return null;
-    }
-    return fullPath;
   }
 }
 
-export const storageService = new LocalObjectStorageService();
+class SupabaseObjectStorageService implements IStorageService {
+  private readonly endpoint: URL;
+  private readonly headers: Record<string, string>;
+
+  constructor(url: string, private readonly bucket: string, key: string) {
+    this.endpoint = new URL(url);
+    if (this.endpoint.protocol !== 'https:' || !/^[\w-]+$/.test(bucket) || !key) {
+      throw new Error('Set the HTTPS Supabase project URL, private bucket name, and server key.');
+    }
+    this.headers = key.startsWith('sb_secret_')
+      ? { apikey: key }
+      : { apikey: key, Authorization: `Bearer ${key}` };
+  }
+
+  private objectUrl(fileKey: string, authenticated = false): URL {
+    const object = fileKey.split('/').map(encodeURIComponent).join('/');
+    return new URL(`/storage/v1/object/${authenticated ? 'authenticated/' : ''}${this.bucket}/${object}`, this.endpoint);
+  }
+
+  async saveFile(params: Upload) {
+    const fileKey = makeFileKey(params);
+    const response = await fetch(this.objectUrl(fileKey), {
+      method: 'POST',
+      headers: { ...this.headers, 'Content-Type': params.mimeType, 'x-upsert': 'false' },
+      body: new Uint8Array(params.buffer),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error(`Storage upload failed (HTTP ${response.status}).`);
+    return { fileKey, publicUrl: `/uploads/${fileKey}` };
+  }
+
+  async readFile(fileKey: string): Promise<Buffer | null> {
+    if (!fileKeyPattern.test(fileKey)) return null;
+    const response = await fetch(this.objectUrl(fileKey, true), {
+      headers: this.headers,
+      signal: AbortSignal.timeout(15000),
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`Storage download failed (HTTP ${response.status}).`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+}
+
+export const storageService: IStorageService = process.env.STORAGE_DRIVER === 'supabase'
+  ? new SupabaseObjectStorageService(
+      process.env.SUPABASE_URL || '',
+      process.env.SUPABASE_STORAGE_BUCKET || '',
+      process.env.SUPABASE_SECRET_KEY || ''
+    )
+  : new LocalObjectStorageService();

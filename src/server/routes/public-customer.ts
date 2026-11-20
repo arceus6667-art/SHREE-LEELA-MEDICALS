@@ -112,8 +112,8 @@ export function getPublicStoreInfo(): PublicStoreInfo {
     logoPlaceholder: Boolean(store.logo_placeholder),
     logoUrl: (store.logo_url as string) || null,
     storefrontPhotoUrl: (store.storefront_photo_url as string) || null,
-    demoMode: settingsMap.demoMode !== 'false',
-    productionSalesEnabled: settingsMap.productionSalesEnabled === 'true',
+    demoMode: false,
+    productionSalesEnabled: settingsMap.productionSalesEnabled === 'true' && process.env.PRODUCTION_SALES_APPROVED === 'true',
     deliveryFeePaise: Number(settingsMap.deliveryFeePaise ?? 2500),
     freeDeliveryThresholdPaise: Number(settingsMap.freeDeliveryThresholdPaise ?? 49900),
     minimumOrderPaise: Number(settingsMap.minimumOrderPaise ?? 0),
@@ -391,7 +391,7 @@ export function createPublicCustomerRouter(): Router {
       timezone: 'Asia/Kolkata',
       currency: 'INR',
       integrations: {
-        razorpayMode: livePay.allowed ? 'live' : 'test',
+        razorpayMode: livePay.allowed ? 'live' : 'unavailable',
         razorpayKeyConfigured: Boolean(process.env.RAZORPAY_KEY_ID),
         mapsConfigured: mapsAdapter.isConfigured(),
         emailConfigured: Boolean(process.env.RESEND_API_KEY || process.env.SMTP_HOST),
@@ -672,12 +672,35 @@ export function createPublicCustomerRouter(): Router {
       res.status(400).json({ error: 'Valid email is required' });
       return;
     }
-    const resetToken = await authService.createPasswordResetToken(parsed.data.email);
-    res.json({
-      ok: true,
-      message: 'If an account matches this email, password reset instructions have been generated.',
-      resetPreviewToken: resetToken,
-    });
+    if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+      res.status(503).json({ error: 'Email password recovery is unavailable. Contact the store for help.' });
+      return;
+    }
+
+    const email = parsed.data.email.toLowerCase();
+    const resetToken = await authService.createPasswordResetToken(email);
+    if (resetToken) {
+      try {
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: process.env.EMAIL_FROM,
+            to: [email],
+            subject: 'Reset your Shree Leela password',
+            text: `Enter this code in the password reset form: ${resetToken}. If you did not request this, you can ignore this email.`,
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) console.error('Password recovery email failed', response.status);
+      } catch {
+        console.error('Password recovery email could not be sent');
+      }
+    }
+    res.json({ ok: true, message: 'If this email belongs to an account, check your inbox for a reset code.' });
   });
 
   router.post('/auth/reset-password', async (req, res) => {
@@ -1377,308 +1400,6 @@ export function createPublicCustomerRouter(): Router {
     });
   });
 
-  // Payment Gateway: Razorpay Order Creation, Signature Verification, Failure Logging & Retry
-  router.post('/payments/razorpay/create-order', requireAuth, async (req: AuthenticatedRequest, res) => {
-    const parsed = z
-      .object({
-        orderId: z.string().optional(),
-        couponCode: z.string().optional(),
-        fulfillmentType: z.enum([FulfillmentType.DELIVERY, FulfillmentType.STORE_PICKUP]).optional(),
-        addressId: z.string().optional(),
-        method: z
-          .enum([PaymentMethod.RAZORPAY_TEST, PaymentMethod.UPI, PaymentMethod.CARD, PaymentMethod.NETBANKING])
-          .optional()
-          .default(PaymentMethod.RAZORPAY_TEST),
-      })
-      .safeParse(req.body || {});
-
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Invalid Razorpay order payload' });
-      return;
-    }
-
-    const store = getPublicStoreInfo();
-
-    // Case A: Paying for an existing order (e.g. post-pharmacist approval or payment retry)
-    if (parsed.data.orderId) {
-      const order = sqlite
-        .prepare('SELECT id, order_number, total_paise, prescription_status, payment_status, status FROM orders WHERE id = ? AND user_id = ?')
-        .get(parsed.data.orderId, req.auth!.userId) as
-        | { id: string; order_number: string; total_paise: number; prescription_status: string; payment_status: string; status: string }
-        | undefined;
-      if (!order) {
-        res.status(404).json({ error: 'Order not found', code: 'NOT_FOUND' });
-        return;
-      }
-      if (order.prescription_status !== PrescriptionStatus.APPROVED && order.prescription_status !== PrescriptionStatus.NOT_REQUIRED) {
-        res.status(403).json({ error: 'Online payment is locked until the registered pharmacist approves your prescription', code: 'RX_REJECTED' });
-        return;
-      }
-      if (order.payment_status === PaymentStatus.PAID) {
-        res.status(409).json({ error: 'This order is already paid' });
-        return;
-      }
-
-      const gatewayOrder = await paymentGatewayService.createGatewayOrder({
-        storeId: store.id,
-        userId: req.auth!.userId,
-        orderId: order.id,
-        amountPaise: order.total_paise,
-        method: parsed.data.method,
-        receipt: order.order_number,
-      });
-
-      sqlite
-        .prepare('UPDATE payments SET gateway_order_id = ?, method = ?, updated_at = ? WHERE order_id = ?')
-        .run(gatewayOrder.gatewayOrderId, parsed.data.method, new Date().toISOString(), order.id);
-
-      res.json(gatewayOrder);
-      return;
-    }
-
-    // Case B: Pre-checkout payment initiation strictly from server cart calculation
-    const cartId = getOrCreateCartId(req, res, store.id);
-    const cart = buildCartDTO(cartId, store.id, req);
-    if (cart.items.length === 0) {
-      res.status(400).json({ error: 'Your cart is empty', code: 'STOCK_CHANGED' });
-      return;
-    }
-
-    let pinFee = store.deliveryFeePaise;
-    if (parsed.data.fulfillmentType !== FulfillmentType.STORE_PICKUP && parsed.data.addressId) {
-      const addr = sqlite
-        .prepare('SELECT postal_code FROM addresses WHERE id = ? AND user_id = ?')
-        .get(parsed.data.addressId, req.auth!.userId) as { postal_code: string } | undefined;
-      if (addr) {
-        const pin = sqlite
-          .prepare('SELECT delivery_fee_paise FROM serviceable_pincodes WHERE store_id = ? AND pincode = ? AND is_active = 1')
-          .get(store.id, addr.postal_code) as { delivery_fee_paise: number } | undefined;
-        if (pin) pinFee = pin.delivery_fee_paise;
-      }
-    }
-
-    let discountPaise = 0;
-    if (parsed.data.couponCode) {
-      const coupon = sqlite
-        .prepare('SELECT * FROM coupons WHERE upper(code) = upper(?) AND is_active = 1')
-        .get(parsed.data.couponCode) as Record<string, unknown> | undefined;
-      if (coupon && cart.subtotalPaise >= Number(coupon.min_order_paise)) {
-        discountPaise =
-          coupon.discount_type === 'PERCENT'
-            ? Math.round((cart.subtotalPaise * Number(coupon.discount_value)) / 100)
-            : Number(coupon.discount_value);
-        if (coupon.max_discount_paise) discountPaise = Math.min(discountPaise, Number(coupon.max_discount_paise));
-      }
-    }
-
-    const deliveryFeePaise =
-      parsed.data.fulfillmentType === FulfillmentType.STORE_PICKUP || cart.subtotalPaise >= store.freeDeliveryThresholdPaise
-        ? 0
-        : pinFee;
-    const totalPaise = Math.max(100, cart.subtotalPaise - discountPaise + deliveryFeePaise);
-
-    const gatewayOrder = await paymentGatewayService.createGatewayOrder({
-      storeId: store.id,
-      userId: req.auth!.userId,
-      amountPaise: totalPaise,
-      method: parsed.data.method,
-      receipt: `CART-${cartId.slice(0, 8)}`,
-    });
-
-    res.json(gatewayOrder);
-  });
-
-  // Test-mode sandbox callback helper (never enabled if live Razorpay mode is active)
-  router.post('/payments/razorpay/test-simulate-auth', requireAuth, (req: AuthenticatedRequest, res) => {
-    const parsed = z
-      .object({
-        gatewayOrderId: z.string().min(6),
-        outcome: z.enum(['SUCCESS', 'FAILED']).default('SUCCESS'),
-      })
-      .safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'gatewayOrderId required' });
-      return;
-    }
-
-    const store = getPublicStoreInfo();
-    const live = paymentGatewayService.isLiveModeAllowed(store.id);
-    if (live.allowed) {
-      res.status(403).json({ error: 'Test payment simulator is disabled in live production mode', code: 'COMPLIANCE_BLOCKED' });
-      return;
-    }
-
-    if (parsed.data.outcome === 'FAILED') {
-      res.json({
-        outcome: 'FAILED',
-        errorCode: 'PAYMENT_FAILED',
-        reason: 'Simulated UPI / bank authorization decline (Test Mode)',
-      });
-      return;
-    }
-
-    const gatewayPaymentId = `pay_slm_test_${crypto.randomBytes(6).toString('hex')}`;
-    const signature = paymentGatewayService.generateTestSignature(parsed.data.gatewayOrderId, gatewayPaymentId);
-    res.json({
-      outcome: 'SUCCESS',
-      gatewayOrderId: parsed.data.gatewayOrderId,
-      gatewayPaymentId,
-      signature,
-    });
-  });
-
-  // Verify Razorpay Signature for an existing order & mark PAID (supports retries)
-  router.post('/payments/razorpay/verify', requireAuth, (req: AuthenticatedRequest, res) => {
-    const parsed = z
-      .object({
-        orderId: z.string().min(1),
-        gatewayOrderId: z.string().min(4),
-        gatewayPaymentId: z.string().min(4),
-        signature: z.string().min(16),
-        method: z
-          .enum([PaymentMethod.RAZORPAY_TEST, PaymentMethod.UPI, PaymentMethod.CARD, PaymentMethod.NETBANKING])
-          .optional(),
-      })
-      .safeParse(req.body);
-
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Payment verification details incomplete', code: 'PAYMENT_FAILED' });
-      return;
-    }
-
-    const order = sqlite
-      .prepare('SELECT id, store_id, user_id, order_number, total_paise, status, prescription_status, payment_status FROM orders WHERE id = ? AND user_id = ?')
-      .get(parsed.data.orderId, req.auth!.userId) as
-      | {
-          id: string;
-          store_id: string;
-          user_id: string;
-          order_number: string;
-          total_paise: number;
-          status: string;
-          prescription_status: string;
-          payment_status: string;
-        }
-      | undefined;
-
-    if (!order) {
-      res.status(404).json({ error: 'Order not found' });
-      return;
-    }
-    if (order.prescription_status !== PrescriptionStatus.APPROVED && order.prescription_status !== PrescriptionStatus.NOT_REQUIRED) {
-      res.status(403).json({ error: 'Online payment locked until pharmacist approves prescription', code: 'RX_REJECTED' });
-      return;
-    }
-
-    const verified = paymentGatewayService.verifySignature({
-      gatewayOrderId: parsed.data.gatewayOrderId,
-      gatewayPaymentId: parsed.data.gatewayPaymentId,
-      signature: parsed.data.signature,
-    });
-    if (!verified) {
-      sqlite
-        .prepare('UPDATE payments SET status = ?, failure_reason = ?, updated_at = ? WHERE order_id = ?')
-        .run(PaymentStatus.FAILED, 'Invalid Razorpay HMAC SHA-256 signature', new Date().toISOString(), order.id);
-      sqlite
-        .prepare('UPDATE orders SET payment_status = ?, updated_at = ? WHERE id = ?')
-        .run(PaymentStatus.FAILED, new Date().toISOString(), order.id);
-      res.status(400).json({ error: 'Payment signature verification failed. Amount was not captured.', code: 'PAYMENT_FAILED' });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const payMethod = parsed.data.method || PaymentMethod.RAZORPAY_TEST;
-
-    databaseService.withTransaction(() => {
-      sqlite
-        .prepare('UPDATE orders SET payment_method = ?, payment_status = ?, updated_at = ? WHERE id = ?')
-        .run(payMethod, PaymentStatus.PAID, now, order.id);
-
-      sqlite
-        .prepare(
-          `UPDATE payments
-           SET method = ?, status = ?, gateway_order_id = ?, gateway_payment_id = ?,
-               provider_reference = ?, signature_verified = 1, failure_reason = NULL, paid_at = ?, updated_at = ?
-           WHERE order_id = ?`
-        )
-        .run(
-          payMethod,
-          PaymentStatus.PAID,
-          parsed.data.gatewayOrderId,
-          parsed.data.gatewayPaymentId,
-          parsed.data.gatewayPaymentId,
-          now,
-          now,
-          order.id
-        );
-    });
-
-    if (order.status === OrderStatus.PAYMENT_PENDING || order.status === OrderStatus.ORDER_RECEIVED) {
-      orderLifecycleService.transition({
-        orderId: order.id,
-        storeId: order.store_id,
-        nextStatus: OrderStatus.CONFIRMED,
-        actorUserId: req.auth!.userId,
-        note: `Online payment verified (${parsed.data.gatewayPaymentId})`,
-      });
-    }
-
-    void notificationService.notify({
-      userId: order.user_id,
-      orderId: order.id,
-      template: 'PAYMENT_RECEIVED',
-      variables: {
-        orderNumber: order.order_number,
-        amountFormatted: `₹${(order.total_paise / 100).toFixed(2)}`,
-        reference: parsed.data.gatewayPaymentId,
-      },
-    });
-
-    realtimeService.emitEvent({
-      event: 'payment.updated',
-      orderId: order.id,
-      storeId: order.store_id,
-      payload: {
-        orderId: order.id,
-        paymentStatus: PaymentStatus.PAID,
-        method: payMethod,
-        reference: parsed.data.gatewayPaymentId,
-      },
-    });
-
-    res.json({ ok: true, paymentReference: parsed.data.gatewayPaymentId, signatureVerified: true });
-  });
-
-  // Record a payment failure without losing the order so customer can retry
-  router.post('/payments/razorpay/failure', requireAuth, (req: AuthenticatedRequest, res) => {
-    const parsed = z
-      .object({
-        orderId: z.string().min(1),
-        reason: z.string().trim().max(240).optional(),
-      })
-      .safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'orderId required' });
-      return;
-    }
-    const order = sqlite
-      .prepare('SELECT id, payment_status FROM orders WHERE id = ? AND user_id = ?')
-      .get(parsed.data.orderId, req.auth!.userId) as { id: string; payment_status: string } | undefined;
-    if (!order || order.payment_status === PaymentStatus.PAID) {
-      res.status(400).json({ error: 'Order cannot be marked failed' });
-      return;
-    }
-    const now = new Date().toISOString();
-    const reason = sanitizeTextInput(parsed.data.reason || 'Payment declined or cancelled by user');
-    databaseService.withTransaction(() => {
-      sqlite.prepare('UPDATE orders SET payment_status = ?, updated_at = ? WHERE id = ?').run(PaymentStatus.FAILED, now, order.id);
-      sqlite
-        .prepare('UPDATE payments SET status = ?, failure_reason = ?, updated_at = ? WHERE order_id = ?')
-        .run(PaymentStatus.FAILED, reason, now, order.id);
-    });
-    res.json({ ok: true, paymentStatus: PaymentStatus.FAILED, reason });
-  });
-
   // Checkout / Place Order (Server-validated pricing, serviceability, Rx gating, concurrency safe & Razorpay HMAC verified)
   router.post('/orders', requireAuth, (req: AuthenticatedRequest, res) => {
     const idempotencyKey = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'].trim() : '';
@@ -1722,6 +1443,15 @@ export function createPublicCustomerRouter(): Router {
     }
 
     const store = getPublicStoreInfo();
+    if (!store.productionSalesEnabled || process.env.PRODUCTION_SALES_APPROVED !== 'true') {
+      res.status(403).json({ error: 'Online ordering is not open yet. Contact the store for availability.', code: 'COMPLIANCE_BLOCKED' });
+      return;
+    }
+    const supportedPaymentMethods: PaymentMethod[] = [PaymentMethod.CASH_ON_DELIVERY];
+    if (!supportedPaymentMethods.includes(parsed.data.paymentMethod)) {
+      res.status(400).json({ error: 'Select payment on delivery or at the store counter.' });
+      return;
+    }
     const cartId = getOrCreateCartId(req, res, store.id);
     const cart = buildCartDTO(cartId, store.id, req);
 
@@ -1900,7 +1630,7 @@ export function createPublicCustomerRouter(): Router {
             parsed.data.deliveryNotes ? sanitizeTextInput(parsed.data.deliveryNotes) : null,
             deliveryOtp,
             deliveryOtpExpiresAt,
-            store.demoMode ? 1 : 0,
+            0,
             store.productionSalesEnabled ? 1 : 0,
             now,
             now
@@ -2104,84 +1834,6 @@ export function createPublicCustomerRouter(): Router {
       const msg = err instanceof Error ? err.message : 'Checkout failed';
       res.status(409).json({ error: msg, code: 'STOCK_CHANGED' });
     }
-  });
-
-  // Legacy-compatible Razorpay Test Payment endpoint delegating to signed gateway verification
-  router.post('/orders/:id/razorpay-test-pay', requireAuth, async (req: AuthenticatedRequest, res) => {
-    const order = sqlite
-      .prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?')
-      .get(req.params.id, req.auth!.userId) as Record<string, unknown> | undefined;
-
-    if (!order) {
-      res.status(404).json({ error: 'Order not found' });
-      return;
-    }
-    if (order.prescription_status !== PrescriptionStatus.APPROVED && order.prescription_status !== PrescriptionStatus.NOT_REQUIRED) {
-      res.status(403).json({ error: 'Online payment is locked until the pharmacist approves your prescription', code: 'RX_REJECTED' });
-      return;
-    }
-    if (order.payment_status === PaymentStatus.PAID) {
-      res.json({ ok: true, paymentReference: 'Already paid' });
-      return;
-    }
-
-    const gwOrder = await paymentGatewayService.createGatewayOrder({
-      storeId: String(order.store_id),
-      userId: req.auth!.userId,
-      orderId: String(order.id),
-      amountPaise: Number(order.total_paise),
-      method: PaymentMethod.RAZORPAY_TEST,
-      receipt: String(order.order_number),
-    });
-
-    const gatewayPaymentId = `pay_slm_test_${crypto.randomBytes(6).toString('hex')}`;
-    const sig = paymentGatewayService.generateTestSignature(gwOrder.gatewayOrderId, gatewayPaymentId);
-    const verified = paymentGatewayService.verifySignature({
-      gatewayOrderId: gwOrder.gatewayOrderId,
-      gatewayPaymentId,
-      signature: sig,
-    });
-    if (!verified) {
-      res.status(400).json({ error: 'Signature verification failed', code: 'PAYMENT_FAILED' });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    databaseService.withTransaction(() => {
-      sqlite
-        .prepare('UPDATE orders SET payment_method = ?, payment_status = ?, updated_at = ? WHERE id = ?')
-        .run(PaymentMethod.RAZORPAY_TEST, PaymentStatus.PAID, now, order.id as string);
-
-      sqlite
-        .prepare(
-          `UPDATE payments
-           SET method = ?, status = ?, gateway_order_id = ?, gateway_payment_id = ?,
-               provider_reference = ?, signature_verified = 1, paid_at = ?, updated_at = ?
-           WHERE order_id = ?`
-        )
-        .run(
-          PaymentMethod.RAZORPAY_TEST,
-          PaymentStatus.PAID,
-          gwOrder.gatewayOrderId,
-          gatewayPaymentId,
-          gatewayPaymentId,
-          now,
-          now,
-          order.id as string
-        );
-    });
-
-    if (order.status === OrderStatus.PAYMENT_PENDING || order.status === OrderStatus.ORDER_RECEIVED) {
-      orderLifecycleService.transition({
-        orderId: String(order.id),
-        storeId: String(order.store_id),
-        nextStatus: OrderStatus.CONFIRMED,
-        actorUserId: req.auth!.userId,
-        note: `Razorpay Test payment verified (${gatewayPaymentId})`,
-      });
-    }
-
-    res.json({ ok: true, paymentReference: gatewayPaymentId, gatewayOrderId: gwOrder.gatewayOrderId });
   });
 
   // Reorder Subject to Live Stock, Pricing, and Pharmacist Approval
@@ -2640,23 +2292,6 @@ export function createPublicCustomerRouter(): Router {
   });
 
   // Prescription Endpoints
-  router.get('/prescriptions/demo-sample-svg', (_req, res) => {
-    res.setHeader('Content-Type', 'image/svg+xml');
-    res.send(`
-      <svg xmlns="http://www.w3.org/2000/svg" width="520" height="340" viewBox="0 0 520 340">
-        <rect width="520" height="340" fill="#FFFFFF" stroke="#E1E5EB" stroke-width="2"/>
-        <rect x="0" y="0" width="520" height="52" fill="#D71920"/>
-        <text x="24" y="32" fill="#FFFFFF" font-family="sans-serif" font-size="16" font-weight="700">SAMPLE DEMONSTRATION PRESCRIPTION (NOT REAL)</text>
-        <text x="24" y="88" fill="#202630" font-family="sans-serif" font-size="14" font-weight="700">Dr. R. K. Kulkarni, MD (Demo Clinic)</text>
-        <text x="24" y="110" fill="#526071" font-family="sans-serif" font-size="12">Patient: Ananya Deshmukh · Mira Road East</text>
-        <line x1="24" y1="128" x2="496" y2="128" stroke="#E1E5EB"/>
-        <text x="24" y="160" fill="#202630" font-family="monospace" font-size="14">Rx 1. Metformin SR 500mg — 1 tab OD after dinner</text>
-        <text x="24" y="190" fill="#202630" font-family="monospace" font-size="14">Rx 2. Telmisartan 40mg — 1 tab OD morning</text>
-        <text x="24" y="295" fill="#16835D" font-family="sans-serif" font-size="12">Demonstration document for pharmacist review workflow testing</text>
-      </svg>
-    `);
-  });
-
   router.get('/prescriptions', requireAuth, (req: AuthenticatedRequest, res) => {
     const rows = (sqlite
       .prepare(

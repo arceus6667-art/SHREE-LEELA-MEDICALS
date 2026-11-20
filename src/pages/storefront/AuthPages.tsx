@@ -6,14 +6,6 @@ import { useApp } from '../../context/AppContext.tsx';
 import { apiFetch } from '../../lib/api.ts';
 import { Role, type AuthUserDTO } from '../../shared/types.ts';
 
-const DEMO_TEST_ACCOUNTS = [
-  { label: 'Customer (Demo)', email: 'customer.demo@shreeleela.example', pass: 'DemoPass@123', redirect: '/' },
-  { label: 'Store Admin (Demo)', email: 'admin.demo@shreeleela.example', pass: 'AdminPass@123', redirect: '/admin' },
-  { label: 'Pharmacist (Demo)', email: 'pharmacist.demo@shreeleela.example', pass: 'PharmaPass@123', redirect: '/admin/prescriptions' },
-  { label: 'Inventory Mgr (Demo)', email: 'inventory.demo@shreeleela.example', pass: 'InvPass@123', redirect: '/admin/inventory' },
-  { label: 'Delivery Partner (Demo)', email: 'delivery.demo@shreeleela.example', pass: 'RiderPass@123', redirect: '/delivery/dashboard' },
-];
-
 export function LoginPage({ isDeliveryPortal = false }: { isDeliveryPortal?: boolean }) {
   const { refreshUser, refreshCart, showToast } = useApp();
   const [searchParams] = useSearchParams();
@@ -25,17 +17,12 @@ export function LoginPage({ isDeliveryPortal = false }: { isDeliveryPortal?: boo
   const [rememberMe, setRememberMe] = useState(true);
   const [resetToken, setResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [previewResetToken, setPreviewResetToken] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const redirectParam = searchParams.get('redirect');
 
-  const routeAfterLogin = (user: AuthUserDTO | null, explicitRedirect?: string) => {
-    if (explicitRedirect) {
-      navigate(explicitRedirect);
-      return;
-    }
-    if (redirectParam) {
+  const routeAfterLogin = (user: AuthUserDTO | null) => {
+    if (redirectParam?.startsWith('/') && !redirectParam.startsWith('//') && !redirectParam.includes('\\')) {
       navigate(redirectParam);
       return;
     }
@@ -70,37 +57,15 @@ export function LoginPage({ isDeliveryPortal = false }: { isDeliveryPortal?: boo
     }
   };
 
-  const handleQuickDemoLogin = async (acc: (typeof DEMO_TEST_ACCOUNTS)[number]) => {
-    setSubmitting(true);
-    try {
-      const data = await apiFetch<{ user: AuthUserDTO }>('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email: acc.email, password: acc.pass, rememberMe: true }),
-      });
-      await refreshUser();
-      await refreshCart();
-      showToast(`Signed in: ${acc.label}`);
-      routeAfterLogin(data.user, acc.redirect);
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Login failed', 'error');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const handleForgot = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const data = await apiFetch<{ resetPreviewToken?: string; message: string }>('/api/auth/forgot-password', {
+      const data = await apiFetch<{ message: string }>('/api/auth/forgot-password', {
         method: 'POST',
         body: JSON.stringify({ email }),
       });
-      if (data.resetPreviewToken) {
-        setPreviewResetToken(data.resetPreviewToken);
-        setResetToken(data.resetPreviewToken);
-      }
-      showToast('Password reset token generated');
+      showToast(data.message);
       setMode('reset');
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : 'Request failed', 'error');
@@ -119,7 +84,6 @@ export function LoginPage({ isDeliveryPortal = false }: { isDeliveryPortal?: boo
       });
       showToast('Password updated. Please sign in.');
       setMode('login');
-      setPreviewResetToken(null);
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : 'Reset failed', 'error');
     } finally {
@@ -209,7 +173,7 @@ export function LoginPage({ isDeliveryPortal = false }: { isDeliveryPortal?: boo
                 />
               </div>
               <Button type="submit" disabled={submitting} className="w-full">
-                Generate Reset Token
+                Request password reset
               </Button>
               <button
                 type="button"
@@ -223,11 +187,6 @@ export function LoginPage({ isDeliveryPortal = false }: { isDeliveryPortal?: boo
 
           {mode === 'reset' && (
             <form onSubmit={handleReset} className="space-y-4">
-              {previewResetToken && (
-                <div className="rounded bg-[#F5F7FA] border border-[#E1E5EB] p-3 text-xs font-mono break-all">
-                  Demo Reset Token: {previewResetToken}
-                </div>
-              )}
               <div>
                 <Label>Reset Token</Label>
                 <Input required value={resetToken} onChange={(e) => setResetToken(e.target.value)} />
@@ -252,28 +211,6 @@ export function LoginPage({ isDeliveryPortal = false }: { isDeliveryPortal?: boo
           )}
         </Card>
 
-        {/* Collapsible Demo Test User Helper */}
-        <details className="rounded-lg border border-[#E1E5EB] bg-white p-4 text-xs">
-          <summary className="cursor-pointer font-semibold text-[#202630]">
-            Demonstration Test Accounts (All 3 Panels)
-          </summary>
-          <p className="mt-1.5 text-[#526071]">
-            One-click sign-in for testing Customer, Store Admin, Pharmacist, Inventory, and Delivery Partner roles:
-          </p>
-          <div className="mt-3 space-y-2">
-            {DEMO_TEST_ACCOUNTS.map((acc) => (
-              <div key={acc.email} className="flex items-center justify-between gap-2 rounded border border-[#E1E5EB] p-2">
-                <div className="min-w-0">
-                  <div className="font-semibold text-[#202630]">{acc.label}</div>
-                  <div className="truncate font-mono text-[11px] text-[#526071]">{acc.email}</div>
-                </div>
-                <Button size="sm" variant="outline" onClick={() => handleQuickDemoLogin(acc)}>
-                  Sign In
-                </Button>
-              </div>
-            ))}
-          </div>
-        </details>
       </div>
     </StorefrontLayout>
   );

@@ -1,33 +1,21 @@
-# Shree Leela Medical & General Stores — Pharmacy Platform Foundation
+# Shree Leela Medical & General Stores
 
-Integrated pharmacy e-commerce, prescription verification, batch inventory, administration, and live GPS delivery management platform for **Shree Leela Medical & General Stores** (Gaurav Avenue, near GCC Club, Hatkesh Road, Mira Road East, Maharashtra, India).
+A pharmacy storefront, store administration workspace and delivery staff portal backed by the same Express service.
 
-## Architecture Overview
+## Local setup
 
-All three panels communicate through a unified Node.js + Express + Socket.IO backend on port `3000`:
+1. Install Node.js with `node:sqlite` support and install the locked dependencies with `bun install --frozen-lockfile`.
+2. Copy `.env.example` to `.env`. Configure a bootstrap administrator email and long password. The app creates the first administrator when the store has none. Remove the bootstrap variables after the account has been created.
+3. Run `bun run dev`. Open the storefront at `http://localhost:3000/`, store administration at `/admin` and delivery staff sign-in at `/delivery/login`.
 
-1. **Customer Storefront (`/`, `/pharmacy`, `/categories`, `/search`, `/medicine/:slug`, `/upload-prescription`, `/cart`, `/checkout`, `/account`, `/track/:orderId`, `/contact`)**
-2. **Pharmacy Administration Dashboard (`/admin/*`)** — RBAC-protected for `SUPER_ADMIN`, `STORE_ADMIN`, `PHARMACIST`, and `INVENTORY_MANAGER`
-3. **Delivery Partner Application (`/delivery/*`)** — RBAC-protected for `DELIVERY_PARTNER` with live GPS streaming over Socket.IO
+A new SQLite database starts with the store profile and category structure. Confirm the store profile in Admin Settings and import the real catalogue and stock. Use the admin onboarding flow to configure staff, delivery coverage and store policies before enabling sales. Checkout supports payment on delivery or at the store counter. Online card and UPI checkout require a separate gateway integration and verification.
 
-### Service Layer Abstraction (Supabase & PostgreSQL Ready)
+## Runtime configuration
 
-Core infrastructure is isolated behind clean interfaces in `src/server/interfaces/services.ts`:
-- `IDatabaseService` — Transactional relational persistence (local Node SQLite runtime in `./data/shree_leela_pharmacy.db` + full PostgreSQL Prisma schema & migration in `prisma/`)
-- `IAuthService` — `bcryptjs` (cost 12) password hashing, HTTP-only signed session cookies, email verification & password reset tokens, server-side RBAC
-- `IStorageService` — Persistent object storage adapter (`./data/uploads`) for prescriptions and replaceable store logo/photos
-- `IRealtimeService` — Socket.IO room-isolated event emitter (`order:<id>`, `store:<id>:admin`, `driver:<id>`)
-- `IMapsAdapter` — Google Maps integration adapter with coordinate/ETA calculations and configurable Google Maps JS API key support
+Set a strong `SESSION_SECRET` and the deployment URL as `APP_URL`. Keep the SQLite path and uploads on persistent storage. A legacy database containing sample accounts is rejected at startup. Preserve existing data separately when switching paths.
 
-## Running Locally
+To store files in Supabase, create a private Storage bucket and set `STORAGE_DRIVER=supabase`, `SUPABASE_URL`, `SUPABASE_STORAGE_BUCKET` and `SUPABASE_SECRET_KEY` on the server. Express retains authorization for file downloads. Migrate existing files to the bucket under their original keys before switching the driver. The application's data queries still use SQLite. The existing Prisma schema and migration are a starting point for a PostgreSQL port and are not applied at runtime.
 
-```bash
-npm install
-npm run dev
-```
+Set `RESEND_API_KEY` and `EMAIL_FROM` for password recovery. Configure the Google Maps keys for live maps according to the restrictions set in Google Cloud.
 
-The server listens on `http://localhost:3000`.
-
-## Demonstration Mode Notice
-
-Sample medicines, batch numbers, prices, and sample orders seeded on initial boot are flagged `isDemoData = true` and labeled **Demonstration Data** in the UI. Administrators can update store details, upload real store branding/photos, and toggle demonstration banners under `/admin/settings`.
+Run `bun run lint` for TypeScript checks and `bun run build` for the storefront build.

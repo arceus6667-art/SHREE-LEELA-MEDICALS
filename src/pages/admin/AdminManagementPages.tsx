@@ -905,7 +905,6 @@ export function AdminSettingsPage() {
           googleMapsUrl: form.googleMapsUrl,
           drugLicenseNumber: form.drugLicenseNumber,
           gstin: form.gstin,
-          demoMode: form.demoMode,
           deliveryFeePaise: Number(form.deliveryFeePaise),
           freeDeliveryThresholdPaise: Number(form.freeDeliveryThresholdPaise),
           minimumOrderPaise: Number(form.minimumOrderPaise || 0),
@@ -1009,18 +1008,6 @@ export function AdminSettingsPage() {
               <div>
                 <Label>Delivery Service Radius (km)</Label>
                 <Input type="number" min="1" max="50" value={form.deliveryRadiusKm} onChange={(e) => setForm({ ...form, deliveryRadiusKm: Number(e.target.value) })} />
-              </div>
-              <div className="sm:col-span-2 flex items-center gap-2 pt-1">
-                <input
-                  id="demo-mode-toggle"
-                  type="checkbox"
-                  checked={form.demoMode}
-                  onChange={(e) => setForm({ ...form, demoMode: e.target.checked })}
-                  className="accent-[#D71920]"
-                />
-                <label htmlFor="demo-mode-toggle" className="text-sm font-medium text-[#202630] cursor-pointer">
-                  Display Demonstration Data Notice Banner across Storefront &amp; Admin
-                </label>
               </div>
               <div className="sm:col-span-2 flex flex-wrap gap-3">
                 <Button type="submit" disabled={saving}>

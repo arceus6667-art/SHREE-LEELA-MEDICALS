@@ -1,10 +1,11 @@
+import 'dotenv/config';
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import type { IMalwareScannerService } from '../interfaces/services.ts';
 import type { AuthenticatedRequest } from './auth-service.ts';
 
 const FILE_SIGNING_SECRET =
-  process.env.FILE_SIGNING_SECRET ||
+  ((process.env.FILE_SIGNING_SECRET?.length ?? 0) >= 32 ? process.env.FILE_SIGNING_SECRET : undefined) ||
   process.env.SESSION_SECRET ||
   'slm-dev-file-signing-secret-change-in-production';
 

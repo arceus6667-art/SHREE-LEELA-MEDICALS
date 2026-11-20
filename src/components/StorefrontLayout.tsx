@@ -138,14 +138,6 @@ export function StorefrontLayout({
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F5F7FA] text-[#202630] pb-16 lg:pb-0">
-      {/* Slim Demo Notice Bar */}
-      {store?.demoMode && (
-        <div className="bg-[#202630] text-white text-xs py-1.5 px-4 text-center">
-          Demonstration Mode — Sample pharmacy catalog, inventory, and test payments shown for{' '}
-          <span className="font-semibold">{store.name}</span>.
-        </div>
-      )}
-
       {/* Desktop + Mobile Header */}
       <header className="sticky top-0 z-30 border-b border-[#E1E5EB] bg-white">
         {/* Top Utility Strip */}
@@ -167,7 +159,7 @@ export function StorefrontLayout({
                 <span
                   aria-hidden="true"
                   className="flex h-9 w-9 items-center justify-center rounded bg-[#D71920] text-white font-bold text-base shrink-0"
-                  title="Replaceable Store Logo Placeholder"
+                  title="Shree Leela Medical"
                 >
                   +
                 </span>

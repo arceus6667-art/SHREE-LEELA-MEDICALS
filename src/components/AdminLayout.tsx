@@ -44,12 +44,12 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/admin', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/admin/orders', label: 'Orders', icon: ShoppingBag },
-      { to: '/admin/prescriptions', label: 'Rx Verification', icon: FileCheck2 },
-      { to: '/admin/live-tracking', label: 'Live Control Room', icon: MapPinned },
+      { to: '/admin/prescriptions', label: 'Prescription review', icon: FileCheck2 },
+      { to: '/admin/live-tracking', label: 'Live tracking', icon: MapPinned },
     ],
   },
   {
-    label: 'Catalogue & Stock',
+    label: 'Inventory',
     items: [
       { to: '/admin/inventory', label: 'Batch Inventory', icon: Boxes },
       { to: '/admin/bulk-import', label: 'Bulk Import / Export', icon: Upload },
@@ -68,11 +68,11 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Analytics & Governance',
+    label: 'Store administration',
     items: [
       { to: '/admin/onboarding', label: 'Launch Onboarding', icon: Rocket },
       { to: '/admin/reports', label: 'Reports & Exports', icon: BarChart3 },
-      { to: '/admin/audit', label: 'Audit & Staff RBAC', icon: ShieldCheck },
+      { to: '/admin/audit', label: 'Staff access and audit', icon: ShieldCheck },
       { to: '/admin/settings', label: 'Store Settings', icon: Settings },
     ],
   },
@@ -155,7 +155,7 @@ export function AdminLayout({
     <div className="min-h-screen flex bg-[#F5F7FA] text-[#202630]">
       {/* Desktop Collapsible Sidebar */}
       <aside
-        className={`hidden md:flex shrink-0 flex-col border-r border-[#E1E5EB] bg-white transition-all duration-200 ${
+        className={`hidden md:flex md:sticky md:top-0 md:h-dvh shrink-0 flex-col border-r border-[#E1E5EB] bg-white transition-all duration-200 ${
           collapsed ? 'w-[68px]' : 'w-64'
         }`}
       >
@@ -166,7 +166,7 @@ export function AdminLayout({
             </span>
             {!collapsed && (
               <div className="min-w-0">
-                <div className="truncate text-sm font-bold text-[#202630]">Shree Leela ERP</div>
+                <div className="truncate text-sm font-bold text-[#202630]">Shree Leela Medical</div>
                 <div className="truncate text-[11px] text-[#526071]">{store?.code || 'SLM-MIRA-01'}</div>
               </div>
             )}
@@ -246,7 +246,7 @@ export function AdminLayout({
             <div className="flex h-14 items-center justify-between border-b border-[#E1E5EB] px-4">
               <div className="flex items-center gap-2">
                 <span className="flex h-7 w-7 items-center justify-center rounded bg-[#D71920] text-white font-bold text-xs">+</span>
-                <span className="text-sm font-bold">Shree Leela ERP</span>
+                <span className="text-sm font-bold">Shree Leela Medical</span>
               </div>
               <button type="button" onClick={() => setMobileOpen(false)} className="p-1 text-[#526071]">
                 <X className="h-5 w-5" />
@@ -286,12 +286,6 @@ export function AdminLayout({
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {store?.demoMode && (
-          <div className="bg-[#202630] text-white text-xs py-1 px-4 flex items-center justify-between">
-            <span>Demonstration Mode Active — Sample pharmacy inventory & test records</span>
-            <Link to="/admin/settings" className="underline">Manage in Settings</Link>
-          </div>
-        )}
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-4 border-b border-[#E1E5EB] bg-white px-4 sm:px-6">
           <div className="flex items-center gap-3 min-w-0">
             <button
@@ -302,7 +296,7 @@ export function AdminLayout({
             >
               <Menu className="h-4 w-4" />
             </button>
-            <span className="text-xs font-medium text-[#526071] hidden sm:inline">Pharmacy ERP</span>
+            <span className="text-xs font-medium text-[#526071] hidden sm:inline">Store management</span>
             <span className="text-xs text-[#CBD2D9] hidden sm:inline">/</span>
             <h1 className="truncate text-base sm:text-lg font-bold text-[#202630]">{title}</h1>
           </div>

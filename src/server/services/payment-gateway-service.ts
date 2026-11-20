@@ -4,15 +4,15 @@ import type { IPaymentGatewayService } from '../interfaces/services.ts';
 import type { PaymentMethod, RazorpayOrderInitDTO } from '../../shared/types.ts';
 
 function getRazorpayKeyId(): string {
-  return process.env.RAZORPAY_KEY_ID || 'rzp_test_slm_mira_demo';
+  return process.env.RAZORPAY_KEY_ID || '';
 }
 
 function getRazorpayKeySecret(): string {
-  return process.env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_TEST_SECRET || 'slm_razorpay_test_secret_2026';
+  return process.env.RAZORPAY_KEY_SECRET || '';
 }
 
 function getRazorpayWebhookSecret(): string {
-  return process.env.RAZORPAY_WEBHOOK_SECRET || getRazorpayKeySecret();
+  return process.env.RAZORPAY_WEBHOOK_SECRET || '';
 }
 
 class RazorpayGatewayService implements IPaymentGatewayService {
@@ -66,65 +66,30 @@ class RazorpayGatewayService implements IPaymentGatewayService {
     const keyId = getRazorpayKeyId();
     const keySecret = getRazorpayKeySecret();
     const liveCheck = this.isLiveModeAllowed(params.storeId);
-    const isTestMode = !liveCheck.allowed || keyId.startsWith('rzp_test_');
+    if (!liveCheck.allowed) throw new Error(liveCheck.reason || 'Online payments are unavailable.');
 
-    // If real Razorpay test/live API credentials are provided in env, create order directly with Razorpay REST API
-    if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
-      try {
-        const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
-        const resp = await fetch('https://api.razorpay.com/v1/orders', {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${auth}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            amount: params.amountPaise,
-            currency: 'INR',
-            receipt: params.receipt.slice(0, 40),
-            notes: {
-              storeId: params.storeId,
-              orderId: params.orderId || '',
-              method: params.method,
-            },
-          }),
-        });
-        if (resp.ok) {
-          const data = (await resp.json()) as { id: string; amount: number };
-          return {
-            gatewayOrderId: data.id,
-            orderId: params.orderId,
-            amountPaise: data.amount,
-            currency: 'INR',
-            keyId,
-            testMode: isTestMode,
-            merchantName: store?.name || 'Shree Leela Medical & General Stores',
-            prefill: {
-              name: user?.full_name || 'Customer',
-              email: user?.email || '',
-              contact: user?.phone || '',
-            },
-          };
-        }
-      } catch {
-        // Fall through to deterministic Razorpay Test Mode order creation if offline/sandboxed
-      }
-    }
-
-    const gatewayOrderId = `order_slm_test_${crypto.randomBytes(7).toString('hex')}`;
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+    const response = await fetch('https://api.razorpay.com/v1/orders', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: params.amountPaise,
+        currency: 'INR',
+        receipt: params.receipt.slice(0, 40),
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) throw new Error('The payment gateway could not create an order.');
+    const data = await response.json() as { id: string; amount: number };
     return {
-      gatewayOrderId,
+      gatewayOrderId: data.id,
       orderId: params.orderId,
-      amountPaise: params.amountPaise,
+      amountPaise: data.amount,
       currency: 'INR',
       keyId,
-      testMode: true,
+      testMode: false,
       merchantName: store?.name || 'Shree Leela Medical & General Stores',
-      prefill: {
-        name: user?.full_name || 'Customer',
-        email: user?.email || '',
-        contact: user?.phone || '',
-      },
+      prefill: { name: user?.full_name || 'Customer', email: user?.email || '', contact: user?.phone || '' },
     };
   }
 
@@ -140,14 +105,14 @@ class RazorpayGatewayService implements IPaymentGatewayService {
     gatewayPaymentId: string;
     signature: string;
   }): boolean {
-    if (!params.gatewayOrderId || !params.gatewayPaymentId || !params.signature) return false;
+    if (!getRazorpayKeySecret() || !params.gatewayOrderId || !params.gatewayPaymentId || !params.signature) return false;
     const expected = this.generateTestSignature(params.gatewayOrderId, params.gatewayPaymentId);
     if (expected.length !== params.signature.length) return false;
     return crypto.timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(params.signature, 'utf8'));
   }
 
   verifyWebhookSignature(rawBody: string, signatureHeader: string): boolean {
-    if (!rawBody || !signatureHeader) return false;
+    if (!getRazorpayWebhookSecret() || !rawBody || !signatureHeader) return false;
     const expected = crypto
       .createHmac('sha256', getRazorpayWebhookSecret())
       .update(rawBody)
