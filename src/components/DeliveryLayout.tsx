@@ -17,9 +17,9 @@ import { Button } from './ui/primitives.tsx';
 import { Role } from '../shared/types.ts';
 
 const DELIVERY_TABS = [
-  { to: '/delivery/dashboard', label: 'Dashboard', icon: LayoutGrid },
+  { to: '/delivery/dashboard', label: 'Today', icon: LayoutGrid },
   { to: '/delivery/assignments', label: 'Orders', icon: ClipboardList },
-  { to: '/delivery/cash', label: 'COD Cash', icon: IndianRupee },
+  { to: '/delivery/cash', label: 'Cash', icon: IndianRupee },
   { to: '/delivery/history', label: 'History', icon: History },
   { to: '/delivery/profile', label: 'Profile', icon: UserCircle },
 ];
@@ -76,7 +76,7 @@ export function DeliveryLayout({
             <div className="min-w-0">
               <div className="truncate text-sm font-bold text-[#202630]">{title}</div>
               <div className="truncate text-[11px] text-[#526071]">
-                {store?.name || 'Shree Leela Medical'} · Rider PWA
+                {store?.name || 'Shree Leela Medical'} · Delivery staff
               </div>
             </div>
           </div>
@@ -89,6 +89,7 @@ export function DeliveryLayout({
                 <Link
                   key={t.to}
                   to={t.to}
+              aria-current={active ? 'page' : undefined}
                   className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium whitespace-nowrap ${
                     active ? 'bg-[#F0FDF4] text-[#16835D]' : 'text-[#526071] hover:text-[#202630]'
                   }`}
@@ -149,6 +150,7 @@ export function DeliveryLayout({
             <Link
               key={t.to}
               to={t.to}
+              aria-current={active ? 'page' : undefined}
               className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] text-[11px] font-medium ${
                 active ? 'text-[#16835D]' : 'text-[#526071]'
               }`}

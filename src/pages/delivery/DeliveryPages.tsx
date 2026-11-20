@@ -257,11 +257,12 @@ export function DeliveryDashboardPage() {
               <Button
                 type="button"
                 variant={data.partner.is_on_shift ? 'secondary' : 'outline'}
+                aria-pressed={Boolean(data.partner.is_on_shift)}
                 disabled={togglingDuty}
                 onClick={toggleOnlineDuty}
                 className="min-h-[44px] px-4"
               >
-                {data.partner.is_on_shift ? 'On Duty (Available)' : 'Off Duty (Tap to Go Online)'}
+                {data.partner.is_on_shift ? 'End shift' : 'Start shift'}
               </Button>
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[#E1E5EB] pt-2.5 text-xs text-[#526071]">
@@ -276,7 +277,7 @@ export function DeliveryDashboardPage() {
               </span>
             </div>
             <p className="text-[11px] text-[#526071]">
-              Online duty status marks you available for assignments and does not start continuous GPS tracking until you have an accepted delivery.
+              You can receive assignments while on shift. Location sharing starts when you accept a delivery.
             </p>
           </Card>
 
@@ -308,11 +309,11 @@ export function DeliveryDashboardPage() {
           {/* Key Rider Metrics */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Card className="p-4">
-              <div className="text-xs text-[#526071]">Pending Accept</div>
+              <div className="text-xs text-[#526071]">Awaiting acceptance</div>
               <div className="mt-1 text-2xl font-bold text-[#D97706] tabular-nums">{data.stats.pendingCount}</div>
             </Card>
             <Card className="p-4">
-              <div className="text-xs text-[#526071]">Active Delivery</div>
+              <div className="text-xs text-[#526071]">Active delivery</div>
               <div className="mt-1 text-2xl font-bold text-[#D71920] tabular-nums">{currentList.length}</div>
             </Card>
             <Card className="p-4">

@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   MapPin,
   Store,
-  CreditCard,
   AlertTriangle,
 } from 'lucide-react';
 import { StorefrontLayout } from '../../components/StorefrontLayout.tsx';
@@ -25,7 +24,6 @@ import {
   PaymentMethod,
   PrescriptionStatus,
   type MedicineDTO,
-  type RazorpayOrderInitDTO,
 } from '../../shared/types.ts';
 
 export function CartPage() {
@@ -106,7 +104,7 @@ export function CartPage() {
                 <Card key={item.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex items-center gap-4 min-w-0">
                     <img
-                      src={item.imageUrl || '/src/assets/images/demo_med_tablets_1795159503038.jpg'}
+                      src={item.imageUrl || '/icon.svg'}
                       alt={item.name}
                       referrerPolicy="no-referrer"
                       className="h-16 w-16 rounded border border-[#E1E5EB] object-cover shrink-0 bg-[#F5F7FA]"
@@ -349,12 +347,9 @@ export function CheckoutPage() {
     description: string;
   } | null>(null);
 
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.RAZORPAY_TEST);
-  const [selectedGatewaySubMethod, setSelectedGatewaySubMethod] = useState<'UPI' | 'CARD' | 'NETBANKING'>('UPI');
+  const paymentMethod = PaymentMethod.CASH_ON_DELIVERY;
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [placingOrder, setPlacingOrder] = useState(false);
-  const [razorpayModalOpen, setRazorpayModalOpen] = useState(false);
-  const [razorpayOrder, setRazorpayOrder] = useState<RazorpayOrderInitDTO | null>(null);
   const [checkoutError, setCheckoutError] = useState<{ code?: string; message: string } | null>(null);
   const [checkoutIdemKey, setCheckoutIdemKey] = useState(() => generateIdempotencyKey('ord'));
 
@@ -535,12 +530,7 @@ export function CheckoutPage() {
     }
   };
 
-  const submitOrderRequest = async (paymentAuth?: {
-    paymentReference: string;
-    gatewayOrderId?: string;
-    gatewayPaymentId?: string;
-    paymentSignature?: string;
-  }) => {
+  const submitOrderRequest = async () => {
     setPlacingOrder(true);
     setCheckoutError(null);
     try {
@@ -551,10 +541,6 @@ export function CheckoutPage() {
           fulfillmentType,
           addressId: fulfillmentType === FulfillmentType.DELIVERY ? selectedAddressId : undefined,
           paymentMethod,
-          paymentReference: paymentAuth?.paymentReference,
-          gatewayOrderId: paymentAuth?.gatewayOrderId,
-          gatewayPaymentId: paymentAuth?.gatewayPaymentId,
-          paymentSignature: paymentAuth?.paymentSignature,
           couponCode: appliedCoupon?.code,
           prescriptionId: selectedRxId || undefined,
           deliveryNotes,
@@ -575,44 +561,7 @@ export function CheckoutPage() {
       setCheckoutIdemKey(generateIdempotencyKey('ord'));
     } finally {
       setPlacingOrder(false);
-      setRazorpayModalOpen(false);
     }
-  };
-
-  const handleAuthorizeRazorpayTest = async () => {
-    if (!razorpayOrder) return;
-    setPlacingOrder(true);
-    setCheckoutError(null);
-    try {
-      const sim = await apiFetch<{
-        gatewayOrderId: string;
-        gatewayPaymentId: string;
-        paymentSignature: string;
-      }>('/api/payments/razorpay/test-simulate-auth', {
-        method: 'POST',
-        body: JSON.stringify({ gatewayOrderId: razorpayOrder.gatewayOrderId }),
-      });
-      await submitOrderRequest({
-        paymentReference: sim.gatewayPaymentId,
-        gatewayOrderId: sim.gatewayOrderId,
-        gatewayPaymentId: sim.gatewayPaymentId,
-        paymentSignature: sim.paymentSignature,
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Payment authorization failed';
-      setCheckoutError({ code: 'PAYMENT_FAILED', message: msg });
-      setPlacingOrder(false);
-      setRazorpayModalOpen(false);
-    }
-  };
-
-  const handleSimulateRazorpayFailure = () => {
-    setRazorpayModalOpen(false);
-    setCheckoutError({
-      code: 'PAYMENT_FAILED',
-      message: 'Simulated Razorpay payment failure (Bank declined test transaction). Retry online payment or switch to Cash on Delivery.',
-    });
-    showToast('Test payment declined — no order was placed', 'error');
   };
 
   const handlePlaceOrderClick = async () => {
@@ -638,30 +587,7 @@ export function CheckoutPage() {
       return;
     }
 
-    if (paymentMethod === PaymentMethod.RAZORPAY_TEST && rxApprovedAlready) {
-      setPlacingOrder(true);
-      try {
-        const init = await apiFetch<RazorpayOrderInitDTO>('/api/payments/razorpay/create-order', {
-          method: 'POST',
-          body: JSON.stringify({
-            amountPaise: grandTotal,
-            method: selectedGatewaySubMethod,
-          }),
-        });
-        setRazorpayOrder(init);
-        setRazorpayModalOpen(true);
-      } catch (err: unknown) {
-        setCheckoutError({
-          code: err instanceof ApiError ? err.code : 'PAYMENT_FAILED',
-          message: err instanceof Error ? err.message : 'Unable to initiate payment gateway',
-        });
-      } finally {
-        setPlacingOrder(false);
-      }
-      return;
-    }
-
-    submitOrderRequest();
+    await submitOrderRequest();
   };
 
   const stepStatuses = [
@@ -959,36 +885,14 @@ export function CheckoutPage() {
                 <div className="flex items-start gap-2 rounded-md border border-[#F59E0B] bg-[#FFFBEB] p-3 text-xs text-[#92400E]">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
-                    Because your prescription is pending pharmacist verification, this order will be submitted for review first. Online Razorpay Test payment unlocks on your tracking page immediately after pharmacist approval.
+                    We’ll send this order to our pharmacist for review before it can be prepared.
                   </span>
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {[
-                  {
-                    id: PaymentMethod.RAZORPAY_TEST,
-                    label: 'Online Pay (Razorpay Test Mode: UPI / Card / NetBanking)',
-                  },
-                  { id: PaymentMethod.CASH_ON_DELIVERY, label: 'Cash on Delivery / Pay at Counter' },
-                ].map((m) => (
-                  <label
-                    key={m.id}
-                    className={`flex items-center gap-2.5 rounded-md border p-3.5 text-sm font-medium cursor-pointer ${
-                      paymentMethod === m.id ? 'border-[#D71920] bg-[#FFF5F5]' : 'border-[#E1E5EB]'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="payment"
-                      checked={paymentMethod === m.id}
-                      onChange={() => setPaymentMethod(m.id)}
-                      className="accent-[#D71920]"
-                    />
-                    <span>{m.label}</span>
-                  </label>
-                ))}
-              </div>
+              <p className="rounded-md border border-[#E1E5EB] bg-[#F5F7FA] p-3 text-sm font-semibold">
+                {fulfillmentType === FulfillmentType.STORE_PICKUP ? 'Pay at the store counter' : 'Cash on delivery'}
+              </p>
 
               <div>
                 <Label>Delivery / Pickup Instructions (Optional)</Label>
@@ -1049,102 +953,26 @@ export function CheckoutPage() {
                 </div>
               </div>
 
+              {!store?.productionSalesEnabled && (
+                <p role="status" className="text-sm text-[#526071]">Online ordering has not opened. <Link className="underline" to="/contact">Contact the store</Link> for availability.</p>
+              )}
               <Button
                 className="w-full"
                 size="lg"
-                disabled={placingOrder}
+                disabled={placingOrder || !store?.productionSalesEnabled}
                 onClick={handlePlaceOrderClick}
               >
                 {placingOrder
                   ? 'Submitting...'
                   : !rxApprovedAlready
                     ? `Submit for Pharmacist Review (${formatINRPaise(grandTotal)})`
-                    : paymentMethod === PaymentMethod.RAZORPAY_TEST
-                      ? `Pay & Place Order (${formatINRPaise(grandTotal)})`
-                      : `Confirm Order (${formatINRPaise(grandTotal)})`}
+                    : `Confirm Order (${formatINRPaise(grandTotal)})`}
               </Button>
             </Card>
           </div>
         </div>
       </div>
 
-      {/* Razorpay Test Mode Interactive Gateway Dialog */}
-      {razorpayModalOpen && razorpayOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <Card className="w-full max-w-md p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-[#E1E5EB] pb-3">
-              <div className="flex items-center gap-2">
-                <CreditCard className="h-5 w-5 text-[#16835D]" />
-                <div>
-                  <h3 className="text-base font-bold text-[#202630]">Razorpay Test Checkout</h3>
-                  <p className="text-[11px] text-[#526071]">
-                    Shree Leela Medical &amp; General Stores · {razorpayOrder.mode.toUpperCase()} MODE
-                  </p>
-                </div>
-              </div>
-              <span className="rounded bg-[#FEF3C7] px-2 py-0.5 text-[10px] font-bold text-[#92400E]">
-                HMAC VERIFIED
-              </span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              {(['UPI', 'CARD', 'NETBANKING'] as const).map((sub) => (
-                <button
-                  key={sub}
-                  type="button"
-                  onClick={() => setSelectedGatewaySubMethod(sub)}
-                  className={`rounded border px-2 py-1.5 font-semibold cursor-pointer ${
-                    selectedGatewaySubMethod === sub
-                      ? 'border-[#D71920] bg-[#FFF5F5] text-[#D71920]'
-                      : 'border-[#E1E5EB] bg-white text-[#526071]'
-                  }`}
-                >
-                  {sub}
-                </button>
-              ))}
-            </div>
-
-            <div className="rounded bg-[#F5F7FA] p-4 space-y-1.5 text-xs">
-              <div className="flex justify-between">
-                <span className="text-[#526071]">Gateway Order ID</span>
-                <span className="font-mono font-semibold text-[#202630]">{razorpayOrder.gatewayOrderId}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[#526071]">Customer</span>
-                <span className="font-semibold">{user.fullName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[#526071]">Payable Amount</span>
-                <span className="text-base font-bold text-[#202630] tabular-nums">
-                  {formatINRPaise(razorpayOrder.amountPaise)}
-                </span>
-              </div>
-            </div>
-
-            <p className="text-xs text-[#526071]">
-              Authorize simulated {selectedGatewaySubMethod} payment (server HMAC SHA-256 verification) or test failure recovery without charging real money.
-            </p>
-            <div className="flex flex-wrap gap-2 justify-between pt-1">
-              <Button variant="outline" size="sm" disabled={placingOrder} onClick={handleSimulateRazorpayFailure}>
-                Simulate Failure
-              </Button>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setRazorpayModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={placingOrder}
-                  onClick={handleAuthorizeRazorpayTest}
-                >
-                  {placingOrder ? 'Verifying...' : 'Authorize Test Payment'}
-                </Button>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
     </StorefrontLayout>
   );
 }

@@ -4,7 +4,7 @@ import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
-import { databaseService, initSchemaAndSeed, sqlite } from './src/server/db/sqlite-db.ts';
+import { databaseService, initializeDatabase, sqlite } from './src/server/db/sqlite-db.ts';
 import { attachOptionalAuth, type AuthenticatedRequest } from './src/server/services/auth-service.ts';
 import { realtimeService } from './src/server/services/realtime-service.ts';
 import { storageService } from './src/server/services/storage-service.ts';
@@ -25,7 +25,11 @@ import { OrderStatus, PaymentStatus, PrescriptionStatus, Role } from './src/shar
 
 dotenv.config();
 
-initSchemaAndSeed();
+if (process.env.NODE_ENV === 'production' && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32 || /^change-me/.test(process.env.SESSION_SECRET))) {
+  throw new Error('Set a production SESSION_SECRET of at least 32 characters.');
+}
+
+initializeDatabase();
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -60,8 +64,18 @@ app.use('/api/delivery/status', otpLimiter);
 
 app.use('/api', csrfOriginGuard);
 
+async function sendStoredFile(fileKey: string, res: Response): Promise<void> {
+  const contents = await storageService.readFile(fileKey);
+  if (!contents) {
+    res.status(404).end();
+    return;
+  }
+  const extension = path.extname(fileKey).toLowerCase();
+  res.type(extension || 'application/octet-stream').send(contents);
+}
+
 // Short-lived HMAC-signed private file download endpoint (prescriptions & proof-of-delivery photos)
-app.get('/api/files/signed/:folder/:filename', (req, res) => {
+app.get('/api/files/signed/:folder/:filename', (req, res, next) => {
   const folder = req.params.folder;
   if (folder !== 'prescriptions' && folder !== 'pod') {
     res.status(404).json({ error: 'Invalid private file scope' });
@@ -73,13 +87,8 @@ app.get('/api/files/signed/:folder/:filename', (req, res) => {
     res.status(403).json({ error: 'Signed file URL is invalid or expired', code: 'UNAUTHORIZED' });
     return;
   }
-  const absPath = storageService.getAbsolutePath(`${folder}/${req.params.filename}`);
-  if (!absPath) {
-    res.status(404).end();
-    return;
-  }
   res.setHeader('Cache-Control', 'private, no-store');
-  res.sendFile(absPath);
+  void sendStoredFile(`${folder}/${req.params.filename}`, res).catch(next);
 });
 
 // Razorpay Signed Webhook Endpoint (idempotent event ledger)
@@ -218,7 +227,7 @@ app.post('/api/webhooks/razorpay', (req: Request & { rawBody?: string }, res) =>
 });
 
 // Uploads route with strict private access gate for prescriptions & proof-of-delivery
-app.get('/uploads/:folder/:filename', (req: AuthenticatedRequest, res) => {
+app.get('/uploads/:folder/:filename', (req: AuthenticatedRequest, res, next) => {
   const allowedFolders = ['store', 'prescriptions', 'pod', 'medicines', 'partners'] as const;
   const folder = allowedFolders.includes(req.params.folder as (typeof allowedFolders)[number])
     ? req.params.folder
@@ -273,12 +282,7 @@ app.get('/uploads/:folder/:filename', (req: AuthenticatedRequest, res) => {
     res.setHeader('Cache-Control', 'public, max-age=3600');
   }
 
-  const absPath = storageService.getAbsolutePath(`${folder}/${req.params.filename}`);
-  if (!absPath) {
-    res.status(404).end();
-    return;
-  }
-  res.sendFile(absPath);
+  void sendStoredFile(`${folder}/${req.params.filename}`, res).catch(next);
 });
 
 app.use('/api', createPublicCustomerRouter());

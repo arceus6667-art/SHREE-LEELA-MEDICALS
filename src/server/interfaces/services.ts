@@ -28,7 +28,7 @@ export interface IStorageService {
     mimeType: string;
     buffer: Buffer;
   }): Promise<{ fileKey: string; publicUrl: string }>;
-  getAbsolutePath(fileKey: string): string | null;
+  readFile(fileKey: string): Promise<Buffer | null>;
 }
 
 export interface IMalwareScannerService {

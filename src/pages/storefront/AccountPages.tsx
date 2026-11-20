@@ -304,7 +304,7 @@ export function AccountPage() {
       <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E1E5EB] pb-4">
           <div>
-            <h1 className="text-2xl font-bold text-[#202630]">My Pharmacy Account</h1>
+            <h1 className="text-2xl font-bold text-[#202630]">My account</h1>
             <p className="text-xs text-[#526071]">
               {user.fullName} · {user.email}
             </p>
@@ -329,13 +329,14 @@ export function AccountPage() {
             { id: 'prescriptions' as const, label: `Prescriptions (${dashboard?.prescriptions.length || 0})`, icon: FileText },
             { id: 'saved' as const, label: `Saved Products (${dashboard?.savedProducts.length || 0})`, icon: Bookmark },
             { id: 'addresses' as const, label: `Addresses (${dashboard?.addresses.length || 0})`, icon: MapPin },
-            { id: 'support' as const, label: 'Refunds & Support', icon: HelpCircle },
+            { id: 'support' as const, label: 'Help & refunds', icon: HelpCircle },
             { id: 'notifications' as const, label: `Notifications${unreadCount ? ` (${unreadCount})` : ''}`, icon: Bell },
             { id: 'profile' as const, label: 'Profile & Email', icon: CheckCircle2 },
           ].map((t) => (
             <button
               key={t.id}
               type="button"
+              aria-pressed={tab === t.id}
               onClick={() => setTab(t.id)}
               className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold cursor-pointer ${
                 tab === t.id
@@ -715,7 +716,7 @@ export function AccountPage() {
                 <div className="text-xs font-bold text-[#D71920]">TAX INVOICE (GST)</div>
                 <h3 className="text-lg font-bold text-[#202630]">{invoiceData.store.name}</h3>
                 <p className="text-xs text-[#526071]">
-                  {invoiceData.store.addressLine1}, {invoiceData.store.city} · GSTIN: {invoiceData.store.gstin || 'DEMO-GSTIN'} · DL: {invoiceData.store.drugLicenseNumber}
+                  {invoiceData.store.addressLine1}, {invoiceData.store.city} · GSTIN: {invoiceData.store.gstin || '—'} · DL: {invoiceData.store.drugLicenseNumber}
                 </p>
               </div>
               <button type="button" onClick={() => setInvoiceData(null)} className="p-1 text-[#526071] cursor-pointer">

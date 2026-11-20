@@ -17,7 +17,6 @@ import { StorefrontLayout } from '../../components/StorefrontLayout.tsx';
 import { LiveRouteMap } from '../../components/LiveRouteMap.tsx';
 import { ErrorStatePanel } from '../../components/ErrorStatePanel.tsx';
 import { Button, Card } from '../../components/ui/primitives.tsx';
-import { useApp } from '../../context/AppContext.tsx';
 import { ApiError, apiFetch } from '../../lib/api.ts';
 import {
   DELIVERY_STATUS_LABELS,
@@ -27,7 +26,6 @@ import {
   OrderStatus,
   PrescriptionStatus,
   TERMINAL_ORDER_STATUSES,
-  type RazorpayOrderInitDTO,
 } from '../../shared/types.ts';
 
 interface TrackPayload {
@@ -110,12 +108,9 @@ const PICKUP_TIMELINE_STAGES: Array<{ key: OrderStatus; label: string }> = [
 
 export function TrackOrderPage() {
   const { orderId } = useParams();
-  const { showToast } = useApp();
   const [data, setData] = useState<TrackPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
-  const [paymentError, setPaymentError] = useState<string | null>(null);
-  const [paying, setPaying] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
   const lastSeqRef = useRef(0);
 
@@ -224,58 +219,6 @@ export function TrackOrderPage() {
       socket.disconnect();
     };
   }, [data?.order.id, data?.order.status]);
-
-  const handleRazorpayTestPay = async (simulateFailure = false) => {
-    if (!data) return;
-    setPaying(true);
-    setPaymentError(null);
-    try {
-      const init = await apiFetch<RazorpayOrderInitDTO>('/api/payments/razorpay/create-order', {
-        method: 'POST',
-        body: JSON.stringify({ orderId: data.order.id, amountPaise: data.order.total_paise, method: 'UPI' }),
-      });
-
-      if (simulateFailure) {
-        await apiFetch('/api/payments/razorpay/failure', {
-          method: 'POST',
-          body: JSON.stringify({
-            orderId: data.order.id,
-            gatewayOrderId: init.gatewayOrderId,
-            reason: 'Test simulated payment decline',
-          }),
-        });
-        setPaymentError('Simulated payment decline recorded. You can retry payment or continue with Cash on Delivery.');
-        loadTracking();
-        return;
-      }
-
-      const sim = await apiFetch<{ gatewayOrderId: string; gatewayPaymentId: string; paymentSignature: string }>(
-        '/api/payments/razorpay/test-simulate-auth',
-        {
-          method: 'POST',
-          body: JSON.stringify({ gatewayOrderId: init.gatewayOrderId }),
-        }
-      );
-
-      const verified = await apiFetch<{ paymentReference: string }>('/api/payments/razorpay/verify', {
-        method: 'POST',
-        body: JSON.stringify({
-          orderId: data.order.id,
-          gatewayOrderId: sim.gatewayOrderId,
-          gatewayPaymentId: sim.gatewayPaymentId,
-          paymentSignature: sim.paymentSignature,
-        }),
-      });
-      showToast(`Razorpay Test Payment verified (${verified.paymentReference})`);
-      loadTracking();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Payment failed';
-      setPaymentError(msg);
-      showToast(msg, 'error');
-    } finally {
-      setPaying(false);
-    }
-  };
 
   const completedStatuses = new Set(data?.history.map((h) => h.status) || []);
   const rxApprovedOrNotReq =
@@ -453,47 +396,11 @@ export function TrackOrderPage() {
                       <CreditCard className="h-4 w-4 text-[#D71920]" />
                       <span>Payment Status: {data.order.payment_status}</span>
                     </div>
-                    {paymentError && (
-                      <ErrorStatePanel
-                        code="PAYMENT_FAILED"
-                        message={paymentError}
-                        onRetry={() => handleRazorpayTestPay(false)}
-                      />
-                    )}
-                    {rxApprovedOrNotReq ? (
-                      <>
-                        <p className="text-xs text-[#526071]">
-                          Your prescription requirement is verified. Complete HMAC-verified online payment via Razorpay Test Mode or pay on delivery.
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={paying}
-                            onClick={() => handleRazorpayTestPay(false)}
-                          >
-                            {paying
-                              ? 'Processing...'
-                              : `Pay Now via Razorpay Test Mode (${formatINRPaise(data.order.total_paise)})`}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={paying}
-                            onClick={() => handleRazorpayTestPay(true)}
-                          >
-                            Test Failure Recovery
-                          </Button>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="text-xs text-[#92400E] flex items-start gap-1.5">
-                        <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5" />
-                        <span>
-                          Online payment is locked until our registered pharmacist completes prescription review ({data.order.prescription_status}).
-                        </span>
-                      </p>
-                    )}
+                    <p className="text-xs text-[#526071]">
+                      {!rxApprovedOrNotReq
+                        ? 'This order is awaiting pharmacist review.'
+                        : isStorePickup ? 'Pay when you collect your order.' : 'Pay the delivery partner when your order arrives.'}
+                    </p>
                   </Card>
                 )}
 
