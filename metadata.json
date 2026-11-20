@@ -1,0 +1,6 @@
+{
+  "name": "Shree Leela Medical & General Stores",
+  "description": "Integrated pharmacy e-commerce, prescription verification, inventory, administration, and live GPS delivery management platform for Shree Leela Medical & General Stores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
